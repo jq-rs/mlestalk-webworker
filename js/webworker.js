@@ -14,13 +14,14 @@ var myport;
 var myuid;
 var mychannel;
 var ecbkey;
-const SCATTERSIZE = 16;
-const ISIMAGE = 0x10000;
-const ISMULTI = 0x10000;
-const ISFIRST = 0x8000;
-const ISLAST  = 0x4000;
+const SCATTERSIZE = 14;
+const ISIMAGE = 0x4000;
+const ISMULTI = 0x4000;
+const ISFIRST = 0x2000;
+const ISLAST  = 0x1000;
+const BEGIN = new Date(Date.UTC(2018, 0, 1, 0, 0, 0));
 
-function scatterTime(rvalU32, valU32, timeU16)
+function scatterTime(rvalU32, valU32, timeU14)
 {
 	//check first which bits to use
 	var numofones = 0;
@@ -40,12 +41,12 @@ function scatterTime(rvalU32, valU32, timeU16)
 		if((isOnes && bit[0] > 0) || (false == isOnes && 0 == bit[0])) {
 			var tbit = new Uint32Array(1);
 			//apply setting to next item
-			tbit[0] = (timeU16 & (1 << timeslot)) >> timeslot;
+			tbit[0] = (timeU14 & (1 << timeslot)) >> timeslot;
 			if(tbit[0] > 0) {
-				valU32 = valU32 | (1 << i);
+				valU32 |= (1 << i);
 			}
 			else {
-				valU32 = valU32 & ~(1 << i);				
+				valU32 &= ~(1 << i);				
 			}
 			timeslot--;
 			if(timeslot < 0)
@@ -59,7 +60,7 @@ function unscatterTime(rvalU32, svalU32)
 {
 	//check first which bits to use
 	var numofones = 0;
-	var timeU16 = new Uint32Array(1);
+	var timeU14 = new Uint32Array(1);
 	var isOnes = true;
 	for (var i = 31; i >= 0; i--) {
 		var bit = new Uint32Array(1);
@@ -78,31 +79,31 @@ function unscatterTime(rvalU32, svalU32)
 			var sbit = new Uint32Array(1);
 			sbit[0] = (svalU32 & (1 << i)) >> i;
 			if(sbit[0] > 0)
-				timeU16[0] |= (1 << timeslot);
+				timeU14[0] |= (1 << timeslot);
 			timeslot--;
 			if(timeslot < 0)
 				break;
 		}
 	}
-	return timeU16[0];
+	return timeU14[0];
 }
 
 function createTimestamp(weekstamp) {
-	var begin = new Date(Date.UTC(2018, 0, 1, 0, 0, 0));
+	var begin = BEGIN;
 	var this_week = new Date(begin.valueOf() + weekstamp*1000*60*60*24*7);
 	var timestamp = parseInt((Date.now() - this_week)/1000/60);
 	return timestamp;
 }
 
 function createWeekstamp() {
-	var begin = new Date(Date.UTC(2018, 0, 1, 0, 0, 0));
+	var begin = BEGIN;
 	var now = new Date(Date.now());
 	var weekstamp = parseInt((now - begin)/1000/60/60/24/7);
 	return weekstamp;
 }
 
 function readTimestamp(timestamp, weekstamp) {
-	var begin = new Date(Date.UTC(2018, 0, 1, 0, 0, 0));
+	var begin = BEGIN;
 	var weeks = new Date(begin.valueOf() + weekstamp*1000*60*60*24*7);
 	var extension = timestamp * 1000 * 60;	
 	var time = new Date(weeks.valueOf() + extension);
@@ -224,18 +225,18 @@ function open_socket(myport, myaddr, uid, channel) {
 
 			var timestring = decrypted.slice(0,8);
 			var rarray = bfCbc.split64by32(timestring);
-			var timeU16 = unscatterTime(rarray[0], rarray[1]);
+			var timeU14 = unscatterTime(rarray[0], rarray[1]);
 			var weekstring = decrypted.slice(8,16);
 			var warray = bfCbc.split64by32(weekstring);
 			var weekU16 = unscatterTime(warray[0], warray[1]);
-			var msgDate = readTimestamp(timeU16 & ~ISIMAGE, weekU16 & ~(ISMULTI|ISFIRST|ISLAST));
+			var msgDate = readTimestamp(timeU14 & ~ISIMAGE, weekU16 & ~(ISMULTI|ISFIRST|ISLAST));
 			var message = decrypted.slice(16, decrypted.byteLength);
 
 			var isImage = false;
 			var isMultipart = false;
 			var isFirst = false;
 			var isLast = false;
-			if(timeU16 & ISIMAGE)
+			if(timeU14 & ISIMAGE)
 				isImage = true;
 			if(weekU16 & ISMULTI)
 				isMultipart = true;
@@ -267,7 +268,7 @@ onmessage = function(e) {
 			var uid = e.data[4];
 			var channel = e.data[5];
 			var fullkey = StringToUint8(e.data[6]);
-			var isTokenChannel = e.data[7];
+			var isEncryptedChannel = e.data[7];
 
 			var round = new BLAKE2s();
 			round.update(fullkey);
@@ -300,7 +301,7 @@ onmessage = function(e) {
 			myuid = btoa(bfEcb.encrypt(uid));
 
 			var bfchannel;
-			if(!isTokenChannel) {
+			if(!isEncryptedChannel) {
 				bfchannel = bfEcb.encrypt(channel);
 				mychannel = btoa(bfchannel);
 			}
@@ -314,7 +315,7 @@ onmessage = function(e) {
 		case "send":
 			var uid = e.data[2];
 			var channel = e.data[3];
-			var isTokenChannel = e.data[4];
+			var isEncryptedChannel = e.data[4];
 			var randarr = e.data[5];
 			var isImage = e.data[6];
 			var isMultipart = e.data[7];
@@ -323,7 +324,7 @@ onmessage = function(e) {
 			var iv = randarr.slice(0,2);
 			var rarray = randarr.slice(2);
 
-			if(isTokenChannel) {
+			if(isEncryptedChannel) {
 				channel = bfEcb.trimZeros(bfEcb.decrypt(atob(channel)));
 			}
 
