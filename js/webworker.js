@@ -228,8 +228,8 @@ function open_socket(myport, myaddr, uid, channel) {
 			var timeU14 = unscatterTime(rarray[0], rarray[1]);
 			var weekstring = decrypted.slice(8,16);
 			var warray = bfCbc.split64by32(weekstring);
-			var weekU16 = unscatterTime(warray[0], warray[1]);
-			var msgDate = readTimestamp(timeU14 & ~ISIMAGE, weekU16 & ~(ISMULTI|ISFIRST|ISLAST));
+			var weekU14 = unscatterTime(warray[0], warray[1]);
+			var msgDate = readTimestamp(timeU14 & ~ISIMAGE, weekU14 & ~(ISMULTI|ISFIRST|ISLAST));
 			var message = decrypted.slice(16, decrypted.byteLength);
 
 			var isImage = false;
@@ -238,11 +238,11 @@ function open_socket(myport, myaddr, uid, channel) {
 			var isLast = false;
 			if(timeU14 & ISIMAGE)
 				isImage = true;
-			if(weekU16 & ISMULTI)
+			if(weekU14 & ISMULTI)
 				isMultipart = true;
-			if(weekU16 & ISFIRST)
+			if(weekU14 & ISFIRST)
 				isFirst = true;
-			if(weekU16 & ISLAST)
+			if(weekU14 & ISLAST)
 				isLast = true;
 
 			postMessage(["data", uid, channel, msgDate.valueOf(), message, isImage, isMultipart, isFirst, isLast]);
