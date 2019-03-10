@@ -308,9 +308,20 @@ onmessage = function(e) {
 			else {
 				mychannel = channel;
 			}
-			/* Fallthrough */
-		case "reconnect":
 			open_socket(myport, myaddr, myuid, mychannel);
+			break;
+		case "reconnect":
+			var uid = e.data[2];
+			var channel = e.data[3];
+			var isEncryptedChannel = e.data[4];
+			if(!isEncryptedChannel) {
+				bfchannel = bfEcb.encrypt(channel);
+				channel = btoa(bfchannel);
+			}
+			// verify that we have already opened the channel earlier
+			if(myuid == uid && mychannel == channel) {
+				open_socket(myport, myaddr, myuid, mychannel);
+			}
 			break;
 		case "send":
 			var uid = e.data[2];
@@ -377,6 +388,9 @@ onmessage = function(e) {
 			postMessage(["send", uid, channel, isMultipart]);
 			break;
 		case "close":
+			var uid = e.data[2];
+			var channel = e.data[3];
+			var isEncryptedChannel = e.data[4];
 			webSocket.close();
 			break;
 	}

@@ -44,8 +44,8 @@ Please see http://mles.io for details about Mles protocol.
  *
  * @param  reconnect {String}         IN: command parameter "reconnect"
  * @param  data {String}              IN: data, null for "reconnect"
- * @param  uid {String}               IN: Mles User Id //TODO MISSING
- * @param  channel {String}           IN: Mles Channel //TODO MISSING
+ * @param  uid {String}               IN: Mles User Id
+ * @param  channel {String}           IN: Mles Channel
  */
  webWorker.postMessage[("reconnect", data, uid, channel)]
  ```
@@ -103,8 +103,8 @@ Please see http://mles.io for details about Mles protocol.
  *
  * @param  close {String}             IN: command parameter "close"
  * @param  data {String}              IN: data, null for close
- * @param  uid {String}               IN: Mles User Id //TODO MISSING
- * @param  channel {String}           IN: Mles Channel //TODO MISSING
+ * @param  uid {String}               IN: Mles User Id
+ * @param  channel {String}           IN: Mles Channel
  */
  webWorker.postMessage[("close", data, uid, channel)]
  ```
