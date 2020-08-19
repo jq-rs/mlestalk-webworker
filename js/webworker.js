@@ -322,11 +322,8 @@ function processOnMessageData(msg) {
 
 				if (message.length == 128 || message.length == 65) {
 					let bd = buf2bn(StringToUint8(message.substring(64, message.length)));
-
-					if(gBdDb[uid] == null) {
-						gBdDb[uid] = bd;
-					}
-				    else if(gBdDb[uid] != bd) {
+					
+				    if(gBdDb[uid] != null && gBdDb[uid] != bd) {
 						//start again
 						gBdDb = {};
 						gBdDb[myuid] = gMyDhKey.bd;
@@ -334,6 +331,8 @@ function processOnMessageData(msg) {
 						gMyDhKey.secret = BigInt(0);
 					}
 					else {
+						gBdDb[uid] = bd;
+
 						let bdcnt = 0;
 						let xkeys = [];
 						let bddb_sorted = Object.fromEntries(Object.entries(gBdDb).sort());
