@@ -46,11 +46,13 @@ let gMyDhKey = {
 	generator: BigInt(DH_GENERATOR),
 	private: BigInt(0),
 	public: BigInt(0),
-	bd: BigInt(0)
+	bd: BigInt(0),
+	secret: BigInt(0)
   };
 
 
   let gDhDb = {};
+  let gBdDb = {};
 
 //let gSpawnedWebWorker = new Worker('webworker.js');
 
@@ -259,105 +261,109 @@ function processOnMessageData(msg) {
 	message = decrypted.slice(16, decrypted.byteLength);
 
 	let msgtype = 0;
-	if (timeU15 & ISFULL) {
+	if (timeU15 & ISFULL)
 		msgtype |= MSGISFULL;
-		const myuid = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyUid)));
-		console.log("Got full len " + message.length)
-		if(uid != myuid && message.length == 64 || message.length == 128) {
-				console.log("Got public+bd key, len " + message.length);
-				let pub = buf2bn(StringToUint8(message.substring(0,64)));
-				console.log("Pub " + pub.toString(16));
-				if(null == gDhDb[uid] || gDhDb[uid] != pub) {
-					gDhDb[uid] = pub;
-					console.log("Adding/replacing to db")
-				}
-				else {
-					//second receive, calculate bd key
-					let prevkey = null;
-					let nextkey = null;
-					let index = 0;
-					let cnt = 0;
-					for(let userid in gDhDb) {
-						console.log("Found " + userid + " key " + gDhDb[userid])
-						if(userid == myuid) {
-							index = cnt;
-							console.log("my index " + index)
-						}
-						else if(cnt == index+1) {
-							nextkey = gDhDb[userid];
-						}
-						prevkey = gDhDb[userid];
-						if(cnt++ >= index+2)
-							break;
-					}
-					if(prevkey && nextkey) {
-					console.log("Prevkey " + prevkey);
-					console.log("Nextkey " + nextkey);
-	
-					gMyDhKey.bd = prevkey * modInv(nextkey, gMyDhKey.prime) % gMyDhKey.prime;
-					console.log("Bd " + gMyDhKey.bd.toString(16));
-					}
-	
-				}
-	
-	
-				if(message.length >= 128) {
-					let bd = buf2bn(StringToUint8(message.substring(64, 128)));
-					console.bd("Bd " + bd.toString(16));
-				}
-		}
-
-		message = "";
-	}
-
 	if (timeU15 & ISIMAGE)
 		msgtype |= MSGISIMAGE;
 	if (weekU15 & ISPRESENCE) {
 		msgtype |= MSGISPRESENCE;
-		if(message.length == 64 || message.length == 128) {
-			console.log("Got public+bd key, len " + message.length);
-			let pub =buf2bn(message.substring(0,64));
-			console.log("Pub " + pub.toString(16));
-			if(!gDhDb[uid]) {
+		const myuid = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyUid)));
+		if (uid != myuid && message.length == 64 || message.length == 65 || message.length == 128) {
+			console.log("Got " + uid + " public+bd key, len " + message.length);
+			let pub = buf2bn(StringToUint8(message.substring(0, 64)));
+			if (null == gDhDb[uid]) {
 				gDhDb[uid] = pub;
-				console.log("Addinf to db")
+				gBdDb = {};
+			}
+			else if (gDhDb[uid] != pub) {
+				gDhDb = {};
+				gBdDb = {};
+				gMyDhKey.bd = BigInt(0);
+				if (gMyDhKey.public) {
+					gDhDb[myuid] = gMyDhKey.public;
+				}
+				gMyDhKey.secret = BigInt(0);
+				gDhDb[uid] = pub;
 			}
 			else {
-				//second receive, calculate bd key
-				let prevkey;
-				let nextkey;
+				//calculate bd key
+				let prevkey = null;
+				let nextkey = null;
 				let index = 0;
-				let cnt = 0;
-				for(var userid in gDhDb) {
-
-					if(userid == gMyUid) {
-						console.log("Found myuid" + userid)
-						index = cnt;
+				let pubcnt = 0;
+				let dhdb_sorted = Object.fromEntries(Object.entries(gDhDb).sort());
+				let keys = [];
+				for (let userid in dhdb_sorted) {
+					if (userid == myuid) {
+						index = pubcnt;
 					}
-					else if(cnt == index+1) {
-						nextkey = gDhDb(userid);
-					}
-					else 
-						prevkey = gDhDb(userid);
-					if(cnt++ >= index+2)
-						break;
+					keys.push(gDhDb[userid]);
+					pubcnt++;
 				}
-				console.log("Prevkey " + prevKey);
-				console.log("Nextkey " + nextKey);
 
-				gMyDhKey.bd = prevkey * modInv(nextKey, gMyDhKey.prime) % gMyDhKey.prime;
-				console.log("Bd " + gMyDhKey.bd.toString(16));
+				const len = keys.length;
+				if (index == 0) {
+					prevkey = keys[len - 1];
+					nextkey = keys[index + 1];
+				}
+				else if (index == len - 1) {
+					prevkey = keys[index - 1];
+					nextkey = keys[0];
+				}
+				else {
+					prevkey = keys[index - 1];
+					nextkey = keys[index + 1];
+				}
+				if (prevkey && nextkey) {
+					let bd = nextkey * modInv(prevkey, gMyDhKey.prime) % gMyDhKey.prime;
+					gMyDhKey.bd = modPow(bd, gMyDhKey.private, gMyDhKey.prime);
+					gBdDb[myuid] = gMyDhKey.bd;
+				}
 
-			}
+				if (message.length == 128 || message.length == 65) {
+					let bd = buf2bn(StringToUint8(message.substring(64, message.length)));
 
+					if(gBdDb[uid] == null) {
+						gBdDb[uid] = bd;
+					}
+				    else if(gBdDb[uid] != bd) {
+						//start again
+						gBdDb = {};
+						gBdDb[myuid] = gMyDhKey.bd;
+						gBdDb[uid] = bd;
+						gMyDhKey.secret = BigInt(0);
+					}
+					else {
+						let bdcnt = 0;
+						let xkeys = [];
+						let bddb_sorted = Object.fromEntries(Object.entries(gBdDb).sort());
+						for (let userid in bddb_sorted) {
+							if (userid == myuid) {
+								index = bdcnt;
+							}
+							xkeys.push(gBdDb[userid]);
+							bdcnt++;
+						}
 
-			if(message.length >= 128) {
-				let bd = buf2bn(StringToUint8(message.substring(64, 128)));
-				console.bd("Bd " + bd.toString(16));
+						if (bdcnt == pubcnt) {
+							//calculate secret key
+							let len = BigInt(xkeys.length);
+							let skey = modPow(prevkey, len * gMyDhKey.private, gMyDhKey.prime);
+							let sub = BigInt(1);
+							for (let i = 0; i < xkeys.length; i++) {
+								let base = xkeys[(i + index) % xkeys.length];
+								let xPow = modPow(base, len - sub, gMyDhKey.prime);
+								skey = skey * xPow;
+								sub++;
+							}
+							skey = skey % gMyDhKey.prime;
+							console.log("!!! My skey " + skey.toString(16) + " !!!");
+							gMyDhKey.secret = skey;
+						}
+					}
+				}
 			}
 		}
-
-		message = "";
 	}
 	if (weekU15 & ISMULTI)
 		msgtype |= MSGISMULTIPART;
@@ -490,7 +496,7 @@ function getDhPrime(bits, passwd) {
 	if(bits != DH_BITS)
 		throw new RangeError("Only 512 bits are now supported");
 
-	console.time("DHprime");
+	//console.time("DHprime");
 	let rnd = new BLAKE2s(32, passwd);
 	let seed = rnd.digest();
 	let dhhprime = new BLAKE2s(32, seed);
@@ -523,7 +529,7 @@ function getDhPrime(bits, passwd) {
 		}
 		rounds++;
 	} 
-	console.timeEnd("DHprime");
+	//console.timeEnd("DHprime");
 	return sprime;
 }
 
@@ -593,140 +599,8 @@ onmessage = function (e) {
 				gMyDhKey.prime = getDhPrime(DH_BITS, passwd);
 				gMyDhKey.private = buf2bn(private);
 				gMyDhKey.public = modPow(gMyDhKey.generator, gMyDhKey.private, gMyDhKey.prime);
-				console.log("My pub " + gMyDhKey.public.toString(16));
 				//update database
 				gDhDb[uid] = gMyDhKey.public;
-				/*
-				//DH test
-				const alice = {
-					prime: BigInt(563),
-					generator: BigInt(2),
-					private: BigInt(9)
-				  };
-				  const bob = {
-					prime: BigInt(563),
-					generator: BigInt(2),
-					private: BigInt(14)
-				  };
-				  const carol = {
-					prime: BigInt(563),
-					generator: BigInt(2),
-					private: BigInt(7)
-				  };
-
-				  console.time("First round");
-				  let rnd = new BLAKE2s(32, passwd);
-				  let seed = rnd.digest();
-				  let dhhprime = new BLAKE2s(32, seed);
-				  let dhlprime = new BLAKE2s(32, dhhprime.digest());
-				  let aPrime = false;
-				  let rounds = 0;
-				  let dhprime = new Uint8Array(64);
-				  while (false == aPrime) {
-					  dhhprime = new BLAKE2s(32, dhlprime.digest());
-					  dhlprime = new BLAKE2s(32, dhhprime.digest());
-
-					  let hival = dhhprime.digest();
-					  for(let i = 0; i < 32; i++) {		
-						dhprime[i] = hival[i];
-					  }
-					  let loval = dhlprime.digest();
-					  for(let i = 0; i < 32; i++) {		
-						dhprime[i+32] = loval[i];
-					  }
-					  dhprime[0] &= 0x7f;
-					  dhprime[0] |= 0x40;
- 					  dhprime[63] |= 0x1;
-					  aPrime = checkPrime(dhprime);
-					  if(aPrime) {
-						  qprime = fromBuffer(dhprime);
-						  sprime = BigInt(2)*qprime-BigInt(1);
-						  aPrime = isPrime(sprime);
-						  if(aPrime)
-						  	console.log("Sofie prime is " + aPrime + " val " + sprime.toString(16));
-					  }
-					  rounds++;
-					  //console.log("Dhprime " + bytesToHex(dhprime) + "Is prime " + aPrime)
-				  } 
-				  console.log("Rounds " + rounds + " for sprime " + sprime.toString(16));
-				  console.timeEnd("First round");
-
-				  alice.prime = sprime;
-				  bob.prime = sprime;
-				  carol.prime = sprime;
-
-				  let private = new Uint8Array(64);
-				  self.crypto.getRandomValues(private);
-				  alice.private = fromBuffer(private);
-				  self.crypto.getRandomValues(private);
-				  bob.private = fromBuffer(private);
-				  self.crypto.getRandomValues(private);
-				  carol.private = fromBuffer(private);
-
-				  const key1 = modPow(BigInt(alice.generator), BigInt(alice.private), BigInt(alice.prime));
-				  const key2 = modPow(BigInt(bob.generator), BigInt(bob.private), BigInt(bob.prime));
-				  const key3 = modPow(BigInt(carol.generator), BigInt(carol.private), BigInt(carol.prime));
-
-				  let xkey1 = key2 * modInv(key3, alice.prime) % alice.prime;
-				  let xkey2 = key3 * modInv(key1, bob.prime) % bob.prime;
-				  let xkey3 = key1 * modInv(key2, carol.prime) % carol.prime;
-				  xkey1 = modPow(xkey1, alice.private, alice.prime);
-				  xkey2 = modPow(xkey2, bob.private, bob.prime);
-				  xkey3 = modPow(xkey3, carol.private, carol.prime);
-
-				  xkeys = [xkey1, xkey2, xkey3];
-
-				  console.log("Xkeys" + xkeys)
-
-				  let klen = BigInt(xkeys.length);
-				  console.log("Klen " + klen)
-
-				  //alice
-				  let skey1 = modPow(key3, klen * alice.private, alice.prime);
-
-				  let len = 3;
-				  let sub = 1;
-				  for(let i = 0; i < xkeys.length - 1; i++) {
-					let base = xkeys[(i + 0) % xkeys.length];
-					let xPow = modPow(base, BigInt(len - sub), alice.prime);
-					sub++;
-					skey1 = skey1 * xPow;
-				} 
-				  skey1 = skey1 % alice.prime;
-				  
-				  console.log("Alice skey " + skey1.toString(16));
-				  
-				  //bob
-				  let skey2 = modPow(key1, klen * bob.private, bob.prime);
-
-				  len = 3;
-				  sub = 1;
-				  for(let i = 0; i < xkeys.length - 1; i++) {
-					let base = xkeys[(i + 1) % xkeys.length];
-					let xPow = modPow(base, BigInt(len - sub), bob.prime);
-					sub++;
-					skey2 = skey2 * xPow;
-				} 
-
-				  skey2 = skey2 % bob.prime;
-				  
-				  console.log("Bob skey " + skey2.toString(16));
-
-				   //carol
-				let skey3 = modPow(key2, klen * carol.private, carol.prime);
-				len = 3;
-				sub = 1;
-				for(let i = 0; i < xkeys.length - 1; i++) {
-					  let base = xkeys[(i + 2) % xkeys.length];
-					  let xPow = modPow(base, BigInt(len - sub), bob.prime);
-					  sub++;
-					  skey3 = skey3 * xPow % carol.prime;
-			  } 
-				  
-				//skey3 = skey3 ;
-									
-				console.log("Carol skey " + skey3.toString(16));
-				 */
 
 				let gChannelKey = createChannelKey(passwd);
 				let channelAontKey = createChannelAontKey(passwd);
@@ -793,41 +667,22 @@ onmessage = function (e) {
 
 				let weekstamp = createWeekstamp(valueofdate);
 				let timestamp = createTimestamp(valueofdate, weekstamp);
-				if (msgtype & MSGISFULL) {
+				if (msgtype & MSGISFULL)
 					timestamp |= ISFULL;
-					console.log("data len "+ data.length)
-					if(data.length == 0) {
-					//add public key, if it exists
-					if(gMyDhKey.public) {
-						let pub = Uint8ToString(bn2buf(gMyDhKey.public));
-						console.log("Adding public " + gMyDhKey.public.toString(16) + " len " + pub.length)
-						data += pub;
-					}
-					//add BD key, if it exists
-					if(gMyDhKey.bd) {
-						let bd = Uint8ToString(bn2buf(gMyDhKey.bd));
-						console.log("Adding bd " + bd + " len " + bd.length)
-						data += bd;
-					}
-					}
-				}
+
 				if (msgtype & MSGISIMAGE) {
 					timestamp |= ISIMAGE;
 				}
 				if (msgtype & MSGISPRESENCE) {
 					weekstamp |= ISPRESENCE;
-
-					console.log("data len "+ data.length)
 					//add public key, if it exists
 					if(gMyDhKey.public) {
 						let pub = Uint8ToString(bn2buf(gMyDhKey.public));
-						console.log("Adding public " + gMyDhKey.public.toString(16) + " len " + pub.length)
 						data += pub;
 					}
 					//add BD key, if it exists
 					if(gMyDhKey.bd) {
 						let bd = Uint8ToString(bn2buf(gMyDhKey.bd));
-						console.log("Adding bd " + bd + " len " + bd.length)
 						data += bd;
 					}
 				}
