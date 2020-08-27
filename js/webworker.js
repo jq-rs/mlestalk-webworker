@@ -53,11 +53,12 @@ let gMyDhKey = {
 	public: BigInt(0),
 	bd: BigInt(0),
 	secret: BigInt(0),
-	secret_acked: false,
+	secretAcked: false,
 	bdMsgCrypt: null,
 	bdChannelKey: null,
 	prevBdMsgCrypt: null,
-	prevBdChannelKey: null
+	prevBdChannelKey: null,
+	fsInformed: false
   };
 
 
@@ -235,6 +236,7 @@ function processOnMessageData(msg) {
 		return;
 	}
 
+	let fsEnabled = false;
 	let noncem = msg.message.slice(0, NONCE_LEN);
 	let arr = msg.message.slice(NONCE_LEN, msg.message.byteLength - HMAC_LEN);
 	let hmac = msg.message.slice(msg.message.byteLength - HMAC_LEN, msg.message.byteLength)
@@ -255,9 +257,7 @@ function processOnMessageData(msg) {
 		if (true == isEqualHmacs(hmac, rhmac)) {
 			hmacok = true;
 			crypt = gMyDhKey.bdMsgCrypt;
-			console.log("Got bd encrypted! Is acked: " + gMyDhKey.secret_acked)
-
-
+			fsEnabled = true;
 		}
 	}
 	if(!hmacok && gMyDhKey.prevBdMsgCrypt) {
@@ -267,6 +267,7 @@ function processOnMessageData(msg) {
 		if (true == isEqualHmacs(hmac, rhmac)) {
 			hmacok = true;
 			crypt = gMyDhKey.prevBdMsgCrypt;
+			fsEnabled = true;
 		}
 	}
 	if(!hmacok) {
@@ -321,7 +322,7 @@ function processOnMessageData(msg) {
 			}
 
 			if(message.length == 64 || message.length == 128) {
-				if(gMyDhKey.secret_acked) {
+				if(gMyDhKey.secretAcked) {
 					gDhDb = {};
 					gBdDb = {};
 					gBdAckDb = {};
@@ -329,7 +330,7 @@ function processOnMessageData(msg) {
 						gDhDb[myuid] = gMyDhKey.public;
 					}
 					gMyDhKey.secret = BigInt(0);
-					gMyDhKey.secret_acked = false;
+					gMyDhKey.secretAcked = false;
 					console.log("!!! skey invalidated in short message!!!");
 					gMyDhKey.bdMsgCrypt = null;
 				}
@@ -348,7 +349,7 @@ function processOnMessageData(msg) {
 					gDhDb[myuid] = gMyDhKey.public;
 				}
 				gMyDhKey.secret = BigInt(0);
-				gMyDhKey.secret_acked = false;
+				gMyDhKey.secretAcked = false;
 				console.log("!!! skey invalidated in mismatching dh!!!");
 				gMyDhKey.bdMsgCrypt = null;
 				gDhDb[uid] = pub;
@@ -361,7 +362,7 @@ function processOnMessageData(msg) {
 					gDhDb[myuid] = gMyDhKey.public;
 				}
 				gMyDhKey.secret = BigInt(0);
-				gMyDhKey.secret_acked = false;
+				gMyDhKey.secretAcked = false;
 				console.log("!!! skey invalidated in short message as with existing bd!!!");
 				gMyDhKey.bdMsgCrypt = null;
 				gDhDb[uid] = pub;
@@ -414,7 +415,7 @@ function processOnMessageData(msg) {
 						gBdDb = {};
 						gBdAckDb = {};
 						gMyDhKey.secret = BigInt(0);
-						gMyDhKey.secret_acked = false;
+						gMyDhKey.secretAcked = false;
 						console.log("!!! skey invalidated in bd !!!");
 						gMyDhKey.bdMsgCrypt = null;
 					}
@@ -427,14 +428,13 @@ function processOnMessageData(msg) {
 							gDhDb[myuid] = gMyDhKey.public;
 						}
 						gMyDhKey.secret = BigInt(0);
-						gMyDhKey.secret_acked = false;
+						gMyDhKey.secretAcked = false;
 						console.log("!!! skey invalidated in mismatching bd length!!!");
 						gMyDhKey.bdMsgCrypt = null;
 						gDhDb[uid] = pub;
 					}
 					else if(gBdDb[uid] == bd) {
-						//do nothing
-						console.log("BD matches, doing nothing")
+						//BD matches, do nothing
 					}
 					else {
 						gBdDb[uid] = bd;
@@ -483,8 +483,7 @@ function processOnMessageData(msg) {
 					}
 
 					if(message.length == 66 || message.length == 129) {
-						if (gMyDhKey.secret_acked) {
-							console.log("Doing nothing, already acked")
+						if (gMyDhKey.secretAcked) {
 							//do nothing, already acked
 						}
 						else {
@@ -500,7 +499,7 @@ function processOnMessageData(msg) {
 									(message.length == 66 && pubcnt == 2 ||
 										message.length == 129 && pubcnt > 2)) {
 									console.log("Ack count matches to pub&bdcnt, enabling send encryption!");
-									gMyDhKey.secret_acked = true;
+									gMyDhKey.secretAcked = true;
 								}
 							}
 							else {
@@ -508,7 +507,7 @@ function processOnMessageData(msg) {
 								gBdDb = {};
 								gBdAckDb = {};
 								gMyDhKey.secret = BigInt(0);
-								gMyDhKey.secret_acked = false;
+								gMyDhKey.secretAcked = false;
 								console.log("!!! bds invalidated in ack !!!");
 								gMyDhKey.bdMsgCrypt = null;
 							}
@@ -525,7 +524,7 @@ function processOnMessageData(msg) {
 	if (weekU15 & ISLAST)
 		msgtype |= MSGISLAST;
 
-	postMessage(["data", uid, channel, msgDate.valueOf(), message, msgtype]);
+	postMessage(["data", uid, channel, msgDate.valueOf(), message, msgtype, fsEnabled]);
 }
 
 function msgDecode(data) {
@@ -556,6 +555,13 @@ function processOnOpen() {
 	let channel = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyChannel)));
 	postMessage(["init", uid, channel, gMyUid, gMyChannel]);
 }
+
+function processOnForwardSecrecy(bdChannelKey, bdMsgCrypt) {
+	let uid = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyUid)));
+	let channel = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyChannel)));
+	postMessage(["forwardsecrecy", uid, channel, gMyUid, gMyChannel, JSON.stringify(bdChannelKey), JSON.stringify(bdMsgCrypt)]);
+}
+
 
 function openSocket(gMyPort, gMyAddr) {
 	if (gWebSocket !== undefined && gWebSocket.readyState == WebSocket.OPEN) {
@@ -591,14 +597,16 @@ function openSocket(gMyPort, gMyAddr) {
 }
 
 function createChannelKey(passwd) {
-	let round = new BLAKE2s(32, passwd);
+	let round = new BLAKE2s(32);
+	round.update(passwd);
 	let blakecb = new BLAKE2s(7); //56-bits max key len
 	blakecb.update(round.digest());
 	return blakecb.digest();
 }
 
 function createChannelAontKey(passwd) {
-	let round = new BLAKE2s(32, passwd);
+	let round = new BLAKE2s(32);
+	round.update(passwd);
 	round.update(passwd);
 	let blakeaontecb = new BLAKE2s(8); //aont key len
 	blakeaontecb.update(round.digest());
@@ -612,7 +620,8 @@ function createMessageKey(passwd) {
 }
 
 function createMessageAontKey(passwd) {
-	let round = new BLAKE2s(32, passwd);
+	let round = new BLAKE2s(32);
+	round.update(passwd);
 	round.update(passwd);
 	round.update(passwd);
 	let blakeaontcbc = new BLAKE2s(8); //aont key len
@@ -646,11 +655,11 @@ function getDhPrime(bits, passwd) {
 	let rounds = 0;
 	let sprime = 0;
 
-	if(bits != DH_BITS)
-		throw new RangeError("Only 512 bits are now supported");
+	if(bits <= 0 || bits % 512 || bits > 4096)
+		throw new RangeError("Invalid key bits" + bits);
 
-	//console.time("DHprime");
-	let rnd = new BLAKE2s(32, passwd);
+	let rnd = new BLAKE2s(32);
+	rnd.update(passwd);
 	let seed = rnd.digest();
 	let dhhprime = new BLAKE2s(32, seed);
 	let dhlprime = new BLAKE2s(32, dhhprime.digest());
@@ -658,23 +667,24 @@ function getDhPrime(bits, passwd) {
 	let dhprime = new Uint8Array(bits/8);
 
 	while (false == aPrime) {
-		// TODO fully bit scale version, now only 512 bits
-		dhhprime = new BLAKE2s(32, dhlprime.digest());
-		dhlprime = new BLAKE2s(32, dhhprime.digest());
+		let cnt = 0;
+		while(cnt < bits/8) {
+			dhhprime = new BLAKE2s(32, dhlprime.digest());
+			dhlprime = new BLAKE2s(32, dhhprime.digest());
 
-		let hival = dhhprime.digest();
-		for(let i = 0; i < 32; i++) {		
-		  dhprime[i] = hival[i];
+			let hival = dhhprime.digest();
+			for (let i = 0; i < 32; i++) {
+				dhprime[cnt++] = hival[i];
+			}
+			let loval = dhlprime.digest();
+			for (let i = 0; i < 32; i++) {
+				dhprime[cnt++] = loval[i];
+			}
 		}
-		let loval = dhlprime.digest();
-		for(let i = 0; i < 32; i++) {		
-		  dhprime[i+32] = loval[i];
-		}
-		dhprime[0] &= 0x7f;
-		dhprime[0] |= 0x40;
-		dhprime[63] |= 0x1;
+		dhprime[0] |= 0x80;
+		dhprime[bits / 8 - 1] |= 0x1;
 		aPrime = checkPrime(dhprime);
-		if(aPrime) {
+		if (aPrime) {
 			sprime = buf2bn(dhprime);
 			//qprime = fromBuffer(dhprime);
 			//sprime = BigInt(2)*qprime-BigInt(1);
@@ -682,7 +692,6 @@ function getDhPrime(bits, passwd) {
 		}
 		rounds++;
 	} 
-	//console.timeEnd("DHprime");
 	return sprime;
 }
 
@@ -730,6 +739,8 @@ onmessage = function (e) {
 				let channel = e.data[5];
 				let passwd = StringToUint8(e.data[6]);
 				let isEncryptedChannel = e.data[7];
+				let prevBdChannelKey = e.data[8];
+				let prevBdMsgCrypt = e.data[9];
 
 				//salt
 				let salt = new BLAKE2s(SCRYPT_SALTLEN, passwd);
@@ -752,6 +763,11 @@ onmessage = function (e) {
 				gMyDhKey.prime = getDhPrime(DH_BITS, passwd);
 				gMyDhKey.private = buf2bn(private);
 				gMyDhKey.public = modPow(gMyDhKey.generator, gMyDhKey.private, gMyDhKey.prime);
+				if(prevBdChannelKey && prevBdMsgCrypt) {
+					gMyDhKey.prevBdChannelKey = JSON.parse(prevBdChannelKey);
+					gMyDhKey.prevBdMsgCrypt = JSON.parse(prevBdMsgCrypt);
+				}
+
 				//update database
 				gDhDb[uid] = gMyDhKey.public;
 
@@ -871,8 +887,12 @@ onmessage = function (e) {
 				let encrypted;
 				let crypt;
 				let channel_key;
-				if(gMyDhKey.bdMsgCrypt && gMyDhKey.secret && gMyDhKey.secret_acked) {	
+				if(gMyDhKey.bdMsgCrypt && gMyDhKey.secret && gMyDhKey.secretAcked) {
 					console.log("Sending bd encrypted!")
+					if(!(msgtype & MSGISPRESENCE) && !gMyDhKey.fsInformed) {
+						processOnForwardSecrecy(gMyDhKey.bdChannelKey, gMyDhKey.bdMsgCrypt);
+						gMyDhKey.fsInformed = true;
+					}
 					crypt = gMyDhKey.bdMsgCrypt;
 					channel_key = gMyDhKey.bdChannelKey;
 				}
@@ -926,7 +946,7 @@ onmessage = function (e) {
 						(data.length == 65 && pubcnt == 2 ||
 							data.length == 129 && pubcnt > 2)) {
 						console.log("Send ack count matches to pub&bdcnt!");
-						gMyDhKey.secret_acked = true;
+						gMyDhKey.secretAcked = true;
 
 						let rnd = new BLAKE2s(32);
 						rnd.update(gChannelKey);
