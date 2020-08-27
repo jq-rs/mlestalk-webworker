@@ -236,7 +236,7 @@ function processBd(uid, msgtype, message) {
 		//console.log("Got " + uid + " public+bd key, len " + message.length);
 		let init = false;
 
-		if (message.length == 64 || message.length == 128) {
+		if (message.length == 64 || message.length == 65 || message.length == 128) {
 			if (!(msgtype & MSGISPRESENCEACK)) {
 				msgtype |= MSGPRESACKREQ; // inform upper layer about presence ack requirement
 			}
