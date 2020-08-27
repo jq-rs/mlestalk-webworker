@@ -277,6 +277,10 @@ function processOnMessageData(msg) {
 		if (false == isEqualHmacs(hmac, rhmac)) {
 			return;
 		}
+		if(gMyDhKey.fsInformed) {
+			processOnForwardSecrecyOff();
+			gMyDhKey.fsInformed = false;
+		}
 		crypt = gMsgCrypt;
 	}
 
@@ -560,6 +564,12 @@ function processOnForwardSecrecy(bdChannelKey, bdMsgCrypt) {
 	let uid = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyUid)));
 	let channel = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyChannel)));
 	postMessage(["forwardsecrecy", uid, channel, gMyUid, gMyChannel, JSON.stringify(bdChannelKey), JSON.stringify(bdMsgCrypt)]);
+}
+
+function processOnForwardSecrecyOff() {
+	let uid = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyUid)));
+	let channel = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(gMyChannel)));
+	postMessage(["forwardsecrecyoff", uid, channel, gMyUid, gMyChannel]);
 }
 
 
