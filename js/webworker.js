@@ -742,9 +742,10 @@ function buf2bn(buf) {
 	return BigInt('0x' + hex.join(''));
 }
 
-/* Padmé: https://lbarman.ch/blog/padme/ */
-function padme(msgsize) {
-	const L = msgsize;
+const MAXRND = 0x3ff;
+/* Padmé: https://lbarman.ch/blog/padme/ with random component */
+function padme(msgsize, rnd) {
+	const L = msgsize + (rnd & ~msgsize & MAXRND);
 	const E = Math.floor(Math.log2(L));
 	const S = Math.floor(Math.log2(E))+1;
 	const lastBits = E-S;
@@ -856,7 +857,7 @@ onmessage = function (e) {
 				let valueofdate = e.data[6];
 				let keysz = 0;
 
-				let randarr = new Uint32Array(14);
+				let randarr = new Uint32Array(13);
 				self.crypto.getRandomValues(randarr);
 
 				let iv = randarr.slice(0, 2);
@@ -960,7 +961,7 @@ onmessage = function (e) {
 
 				const msglen = msgsz + keysz;
 				//padmé padding
-				const padsz = padme(msglen) - msglen;
+				const padsz = padme(msglen, rarray[8]) - msglen;
 				//console.log("TX: Msgsize " + msgsz + " padding sz " + padsz + " keysz " + keysz)
 				if(padsz > 0) {
 					newmessage += Uint8ToString(randBytesSync(padsz));
