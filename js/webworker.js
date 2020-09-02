@@ -6,6 +6,7 @@
  * Copyright (c) 2019-2020 MlesTalk WebWorker developers
  */
 
+
 importScripts('cbor.js', 'blake2s.js', 'blowfish.js', 'scrypt-async.js', 'bigint-mod-arith.js');
 
 let gWebSocket;
@@ -27,6 +28,8 @@ const ISLAST = 0x1000;
 const BEGIN = new Date(Date.UTC(2018, 0, 1, 0, 0, 0));
 const HMAC_LEN = 12;
 const NONCE_LEN = 16;
+
+const HDRLEN = 32;
 
 /* Msg type flags */
 const MSGISFULL =         0x1;
@@ -59,15 +62,13 @@ let gMyDhKey = {
 	prevBdMsgCrypt: null,
 	prevBdChannelKey: null,
 	fsInformed: false
-  };
+};
 
-  let gDhDb = {};
-  let gBdDb = {};
-  let gBdAckDb = {};
+let gDhDb = {};
+let gBdDb = {};
+let gBdAckDb = {};
 
-//let gSpawnedWebWorker = new Worker('webworker.js');
-
-function scatterTime(rvalU32, valU32, timeU15) {
+function scatterU16(rvalU32, valU32, valU16) {
 	//check first which bits to use
 	let tbit = new Uint32Array(1);
 	let bit = new Uint32Array(1);
@@ -79,31 +80,31 @@ function scatterTime(rvalU32, valU32, timeU15) {
 			numofones++;
 		}
 	}
-	let timeslot = SCATTERSIZE;
-	if (numofones <= timeslot)
+	let slot = SCATTERSIZE;
+	if (numofones <= slot)
 		isOnes = false;
 	for (let i = 31; i >= 0; i--) {
 		bit[0] = (rvalU32 & (1 << i)) >> i;
 		if ((isOnes && bit[0] > 0) || (false == isOnes && 0 == bit[0])) {
 			//apply setting to next item
-			tbit[0] = (timeU15 & (1 << timeslot)) >> timeslot;
+			tbit[0] = (valU16 & (1 << slot)) >> slot;
 			if (tbit[0] > 0) {
 				valU32 |= (1 << i);
 			}
 			else {
 				valU32 &= ~(1 << i);
 			}
-			timeslot--;
-			if (timeslot < 0)
+			slot--;
+			if (slot < 0)
 				break;
 		}
 	}
 	return valU32;
 }
 
-function unscatterTime(rvalU32, svalU32) {
+function unscatterU16(rvalU32, svalU32) {
 	//check first which bits to use
-	let timeU15 = new Uint32Array(1);
+	let valU16 = new Uint32Array(1);
 	let sbit = new Uint32Array(1);
 	let bit = new Uint32Array(1);
 	let numofones = 0;
@@ -114,21 +115,21 @@ function unscatterTime(rvalU32, svalU32) {
 			numofones++;
 		}
 	}
-	let timeslot = SCATTERSIZE;
-	if (numofones <= timeslot)
+	let slot = SCATTERSIZE;
+	if (numofones <= slot)
 		isOnes = false;
 	for (let i = 31; i >= 0; i--) {
 		bit[0] = (rvalU32 & (1 << i)) >> i;
 		if ((isOnes && bit[0] > 0) || (false == isOnes && 0 == bit[0])) {
 			sbit[0] = (svalU32 & (1 << i)) >> i;
 			if (sbit[0] > 0)
-				timeU15[0] |= (1 << timeslot);
-			timeslot--;
-			if (timeslot < 0)
+				valU16[0] |= (1 << slot);
+			slot--;
+			if (slot < 0)
 				break;
 		}
 	}
-	return timeU15[0];
+	return valU16[0];
 }
 
 function createTimestamp(valueofdate, weekstamp) {
@@ -443,7 +444,8 @@ function processOnMessageData(msg) {
 
 	//try all three options
 	if(gMyDhKey.bdMsgCrypt) {
-		let blakehmac = new BLAKE2s(HMAC_LEN, gMyDhKey.bdChannelKey);
+		let blakehmac = new BLAKE2s(HMAC_LEN);
+		blakehmac.update(gMyDhKey.bdChannelKey);
 		blakehmac.update(hmacarr);
 		let rhmac = blakehmac.digest();
 		if (true == isEqualHmacs(hmac, rhmac)) {
@@ -453,7 +455,8 @@ function processOnMessageData(msg) {
 		}
 	}
 	if(!hmacok && gMyDhKey.prevBdMsgCrypt) {
-		let blakehmac = new BLAKE2s(HMAC_LEN, gMyDhKey.prevBdChannelKey);
+		let blakehmac = new BLAKE2s(HMAC_LEN);
+		blakehmac.update(gMyDhKey.prevBdChannelKey);
 		blakehmac.update(hmacarr);
 		let rhmac = blakehmac.digest();
 		if (true == isEqualHmacs(hmac, rhmac)) {
@@ -463,7 +466,8 @@ function processOnMessageData(msg) {
 		}
 	}
 	if(!hmacok) {
-		let blakehmac = new BLAKE2s(HMAC_LEN, gChannelKey);
+		let blakehmac = new BLAKE2s(HMAC_LEN)
+		blakehmac.update(gChannelKey);
 		blakehmac.update(hmacarr);
 		let rhmac = blakehmac.digest();
 		if (false == isEqualHmacs(hmac, rhmac)) {
@@ -483,37 +487,52 @@ function processOnMessageData(msg) {
 	let channel = gChanCrypt.trimZeros(gChanCrypt.decrypt(atob(msg.channel)));
 	let decrypted = crypt.decrypt(message, iv);
 
-	if (decrypted.length < 16) {
+	if (decrypted.length < HDRLEN) {
 		return;
 	}
 
-	let timestring = decrypted.slice(0, 8);
-	let rarray = crypt.split64by32(timestring);
+	let versizestr = decrypted.slice(0, 8);
+	let varray = crypt.split64by32(versizestr);
+	const msgsz = unscatterU16(varray[0], varray[1]);
 
-	let timeU15 = unscatterTime(rarray[0], rarray[1]);
-	let weekstring = decrypted.slice(8, 16);
+	let keysizestr = decrypted.slice(8, 16);
+	let karray = crypt.split64by32(keysizestr);
+	let keysz = unscatterU16(karray[0], karray[1]);
+
+	//let padsz = decrypted.length - msgsz - keysz;
+	//console.log("RX: Msgsize " + msgsz + " Keysz " + keysz + " Pad size " + padsz);
+
+	let timestring = decrypted.slice(16, 24);
+	let rarray = crypt.split64by32(timestring);
+	let timeU16 = unscatterU16(rarray[0], rarray[1]);
+	let weekstring = decrypted.slice(24, HDRLEN);
 	let warray = crypt.split64by32(weekstring);
-	let weekU15 = unscatterTime(warray[0], warray[1]);
-	let msgDate = readTimestamp(timeU15 & ~(ISFULL | ISIMAGE), weekU15 & ~(ISPRESENCE | ISMULTI | ISFIRST | ISLAST));
-	message = decrypted.slice(16, decrypted.byteLength);
+	let weekU16 = unscatterU16(warray[0], warray[1]);
+	let msgDate = readTimestamp(timeU16 & ~(ISFULL | ISIMAGE), weekU16 & ~(ISPRESENCE | ISMULTI | ISFIRST | ISLAST));
+
+	message = decrypted.slice(HDRLEN, msgsz);
 
 	let msgtype = 0;
-	if (timeU15 & ISFULL)
+	if (timeU16 & ISFULL)
 		msgtype |= MSGISFULL;
-	if (timeU15 & ISIMAGE)
+	if (timeU16 & ISIMAGE)
 		msgtype |= MSGISIMAGE;
-	if (weekU15 & ISPRESENCE) {
+	if (weekU16 & ISPRESENCE) {
 		msgtype |= MSGISPRESENCE;
-		if (weekU15 & ISPRESENCEACK)
+		if (weekU16 & ISPRESENCEACK)
 			msgtype |= MSGISPRESENCEACK;
-		processBd(uid, msgtype, message);
 	}
-	if (!(weekU15 & ISPRESENCE) && weekU15 & ISMULTI)
+	if (!(weekU16 & ISPRESENCE) && weekU16 & ISMULTI)
 		msgtype |= MSGISMULTIPART;
-	if (weekU15 & ISFIRST)
+	if (weekU16 & ISFIRST)
 		msgtype |= MSGISFIRST;
-	if (weekU15 & ISLAST)
+	if (weekU16 & ISLAST)
 		msgtype |= MSGISLAST;
+
+	if(keysz > 0) {
+		const keystr = decrypted.slice(msgsz, msgsz+keysz);
+		processBd(uid, msgtype, keystr);
+	}
 
 	postMessage(["data", uid, channel, msgDate.valueOf(), message, msgtype, fsEnabled]);
 }
@@ -723,6 +742,16 @@ function buf2bn(buf) {
 	return BigInt('0x' + hex.join(''));
 }
 
+/* Padmé: https://lbarman.ch/blog/padme/ */
+function padme(msgsize) {
+	const L = msgsize;
+	const E = Math.floor(Math.log2(L));
+	const S = Math.floor(Math.log2(E))+1;
+	const lastBits = E-S;
+	const bitMask = 2 ** lastBits - 1;
+	return (L + bitMask) & ~bitMask;
+}
+
 onmessage = function (e) {
 	let cmd = e.data[0];
 	let data = e.data[1];
@@ -739,7 +768,8 @@ onmessage = function (e) {
 				let prevBdKey = e.data[8];
 
 				//salt
-				let salt = new BLAKE2s(SCRYPT_SALTLEN, passwd);
+				let salt = new BLAKE2s(SCRYPT_SALTLEN);
+				salt.update(passwd);
 				salt.update(StringToUint8('salty-mlestalk'));
 
 				//scrypt
@@ -824,8 +854,9 @@ onmessage = function (e) {
 				let isEncryptedChannel = e.data[4];
 				let msgtype = e.data[5];
 				let valueofdate = e.data[6];
+				let keysz = 0;
 
-				let randarr = new Uint32Array(8);
+				let randarr = new Uint32Array(14);
 				self.crypto.getRandomValues(randarr);
 
 				let iv = randarr.slice(0, 2);
@@ -848,29 +879,8 @@ onmessage = function (e) {
 					weekstamp |= ISPRESENCE;
 					if (msgtype & MSGISPRESENCEACK)
 						weekstamp |= ISPRESENCEACK;
-
-					//add public key, if it exists
-					if(gMyDhKey.public) {
-						let pub = Uint8ToString(bn2buf(gMyDhKey.public));
-						data += pub;
-					}
-					//add BD key, if it exists
-					if(gMyDhKey.bd) {
-						let bd = Uint8ToString(bn2buf(gMyDhKey.bd));
-						data += bd;
-						let pubcnt = Object.keys(gDhDb).length;
-						let bdcnt = Object.keys(gBdDb).length;
-						//console.log("During send pubcnt " + pubcnt + " bdcnt " + bdcnt)
-						if(pubcnt == bdcnt && gMyDhKey.secret != BigInt(0)) {
-							let bd = Uint8ToString(bn2buf(BigInt(1)));
-							data += bd;
-							if(gBdAckDb[uid] == null) {
-								//console.log("Adding self to bdack db");
-								gBdAckDb[uid] = true;
-							}
-						}
-					}
 				}
+
 				if (!(msgtype & MSGISPRESENCE) && msgtype & MSGISMULTIPART) {
 					weekstamp |= ISMULTI;
 					if (msgtype & MSGISFIRST) {
@@ -880,10 +890,47 @@ onmessage = function (e) {
 						weekstamp |= ISLAST;
 					}
 				}
-				let sval = scatterTime(rarray[0], rarray[1], timestamp);
-				rarray[1] = sval;
-				sval = scatterTime(rarray[2], rarray[3], weekstamp);
-				rarray[3] = sval;
+
+				const msgsz = data.length + HDRLEN;
+
+				//add public key, if it exists
+				if (gMyDhKey.public) {
+					let pub = Uint8ToString(bn2buf(gMyDhKey.public));
+					keysz += pub.length;
+					data += pub;
+				}
+				//add BD key, if it exists
+				if (gMyDhKey.bd) {
+					let bd = Uint8ToString(bn2buf(gMyDhKey.bd));
+					keysz += bd.length;
+					data += bd;
+					let pubcnt = Object.keys(gDhDb).length;
+					let bdcnt = Object.keys(gBdDb).length;
+					//console.log("During send pubcnt " + pubcnt + " bdcnt " + bdcnt)
+					if (pubcnt == bdcnt && gMyDhKey.secret != BigInt(0)) {
+						let bd = Uint8ToString(bn2buf(BigInt(1)));
+						keysz += bd.length;
+						data += bd;
+						if (gBdAckDb[uid] == null) {
+							//console.log("Adding self to bdack db");
+							gBdAckDb[uid] = true;
+						}
+					}
+				}
+
+
+
+				//version and msg size
+				let hval = scatterU16(rarray[0], rarray[1], msgsz);
+				rarray[1] = hval;
+				//key size
+				let kval = scatterU16(rarray[2], rarray[3], keysz);
+				rarray[3] = kval;
+				//time vals
+				let sval = scatterU16(rarray[4], rarray[5], timestamp);
+				rarray[5] = sval;
+				sval = scatterU16(rarray[6], rarray[7], weekstamp);
+				rarray[7] = sval;
 
 				let newmessage;
 				let encrypted;
@@ -902,8 +949,23 @@ onmessage = function (e) {
 					channel_key = gChannelKey;
 				}
 
+				//version, size and key values
 				newmessage = crypt.num2block32(rarray[0]) + crypt.num2block32(rarray[1]) +
-							crypt.num2block32(rarray[2]) + crypt.num2block32(rarray[3]) + data;
+							crypt.num2block32(rarray[2]) + crypt.num2block32(rarray[3]);
+				//time values
+				newmessage += crypt.num2block32(rarray[4]) + crypt.num2block32(rarray[5]) +
+							crypt.num2block32(rarray[6]) + crypt.num2block32(rarray[7]);
+				//message itself
+				newmessage += data;
+
+				const msglen = msgsz + keysz;
+				//padmé padding
+				const padsz = padme(msglen) - msglen;
+				//console.log("TX: Msgsize " + msgsz + " padding sz " + padsz + " keysz " + keysz)
+				if(padsz > 0) {
+					newmessage += Uint8ToString(randBytesSync(padsz));
+				}
+
 				encrypted = crypt.encrypt(newmessage, iv);
 				
 				let noncearr = nonce2u8arr(nonce);
@@ -914,7 +976,8 @@ onmessage = function (e) {
 				hmacarr.set(noncearr, 0);
 				hmacarr.set(arr, noncearr.byteLength);
 
-				let blakehmac = new BLAKE2s(HMAC_LEN, channel_key);
+				let blakehmac = new BLAKE2s(HMAC_LEN);
+				blakehmac.update(channel_key);
 				blakehmac.update(hmacarr);
 				let hmac = blakehmac.digest();
 
@@ -932,7 +995,6 @@ onmessage = function (e) {
 					break;
 				try {
 					gWebSocket.send(encodedMsg);
-					
 				} catch (err) {
 					break;
 				}
