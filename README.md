@@ -4,7 +4,7 @@ MlesTalk WebWorker is an open source Mles (Modern Lightweight channEl Service) W
 
 Messages using MlesTalk WebWorker are sent on Transport Layer Security (TLS) [1] protected connection by default which should be secure.
 
-In addition to transport-level TLS encryption, it is secured by [Zpinc protocol](https://github.com/ZpincDev/zpinc-webworker/raw/master/zpinc_paper.pdf) for message authentication, integrity and confidentiality. Even though Zpinc protocol should be safe, it is not audited. It is open-source, so you can check the code yourself, please report any issues! Pro bono professional auditors welcome as well!
+In addition to transport-level TLS encryption, it is secured by [Zpinc protocol](https://github.com/ZpincDev/zpinc-webworker/raw/master/zpinc_paper.pdf) for message authentication, integrity and confidentiality. Even though Zpinc protocol should be safe, it is not audited. It is open-source so you can check the code yourself, please report any issues! Pro bono professional auditors welcome as well!
 
 Please see https://mles.io for details about Mles protocol.
 
